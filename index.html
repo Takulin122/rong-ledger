@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>融融記帳表 — 每週餘額盤點</title>
+
+  <!-- iOS Safari PWA 專屬設定 -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="融融記帳" />
+  <meta name="theme-color" content="#FBF9F5" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#161413" media="(prefers-color-scheme: dark)" />
+
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- iPhone Safari 加入主畫面引導橫幅（非獨立模式時顯示） -->
+  <div id="a2hsBanner" class="a2hs-banner hidden" role="region" aria-label="加入主畫面提示">
+    <div>
+      <strong>安裝為原生感 App：</strong>點選 Safari 底部「<strong>分享</strong>
+      <span aria-hidden="true">⎋</span>」按鈕，選擇「<strong>加入主畫面</strong>」即可全螢幕離線使用。
+    </div>
+    <button id="closeA2hsBtn" class="a2hs-close" type="button" aria-label="關閉提示">✕</button>
+  </div>
+
+  <!-- 頂部固定狀態列 -->
+  <header class="app-header">
+    <div>
+      <h1 class="brand-title">融融記帳表</h1>
+      <div id="headerSubtitle" class="brand-subtitle">每週餘額盤點制 · 雙池資金管理</div>
+    </div>
+    <button id="syncStatusPill" class="sync-pill" data-state="offline" type="button" title="點擊立即同步">
+      <span class="sync-dot"></span>
+      <span id="syncStatusText">離線暫存</span>
+    </button>
+  </header>
+
+  <main class="app-main">
+    <!-- ==================== 分頁 1：首頁總覽 (Dashboard) ==================== -->
+    <section id="tab-dashboard" class="tab-view active" aria-label="首頁總覽">
+      <!-- 頂部主卡片 -->
+      <div class="card hero-card">
+        <div class="card-header" style="margin-bottom: 4px;">
+          <span class="hero-label">最新真實淨可用餘額</span>
+          <span id="dashLatestDateBadge" class="badge">尚無紀錄</span>
+        </div>
+        <div id="dashNetBalance" class="hero-net-amount num">$0</div>
+
+        <div class="hero-grid">
+          <div>
+            <div class="hero-stat-label">本週實際總花費</div>
+            <div id="dashWeeklySpend" class="hero-stat-value num">-</div>
+            <div id="dashSpendDelta"></div>
+          </div>
+          <div>
+            <div class="hero-stat-label">5 項目資產總額</div>
+            <div id="dashTotalAssets" class="hero-stat-value num">$0</div>
+            <div id="dashIncomeNote" class="hero-stat-label" style="margin-top: 4px;">本週收入 $0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 雙池資金分佈卡片 -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">雙池資金分佈</h2>
+          <span id="dashPoolRatioText" class="badge">流動 0% · 儲蓄 0%</span>
+        </div>
+
+        <div class="pool-bar-track" aria-hidden="true">
+          <div id="barLiquid" class="pool-bar-liquid" style="width: 50%;"></div>
+          <div id="barSavings" class="pool-bar-savings" style="width: 50%;"></div>
+        </div>
+
+        <div class="pool-grid">
+          <div class="pool-box">
+            <div class="pool-box-header">
+              <span>日常流動池</span>
+              <span id="dashLiquidPct" class="badge liquid">0%</span>
+            </div>
+            <div id="dashLiquidAmount" class="pool-box-amount num">$0</div>
+            <div id="dashLiquidAccounts" class="pool-box-sub">錢包現金 · 中信銀行</div>
+          </div>
+
+          <div class="pool-box">
+            <div class="pool-box-header">
+              <span>儲蓄專款池</span>
+              <span id="dashSavingsPct" class="badge savings">0%</span>
+            </div>
+            <div id="dashSavingsAmount" class="pool-box-amount num">$0</div>
+            <div id="dashSavingsAccounts" class="pool-box-sub">袋袋 · 土銀 · 台銀</div>
+          </div>
+        </div>
+
+        <div class="debt-strip">
+          <span>信用卡未繳卡費（待扣負債）</span>
+          <span id="dashUnpaidCard" class="num">-$0</span>
+        </div>
+      </div>
+
+      <!-- 近 8 週每週實際總花費趨勢圖表 -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">近 8 週實際總花費趨勢</h2>
+          <span id="dashAvgSpendBadge" class="badge num">週均 $-</span>
+        </div>
+        <div class="chart-container">
+          <div id="trendChartBars" class="chart-bars"></div>
+          <div id="trendChartDetail" class="chart-detail-box">
+            <span>點擊上方任一週次柱狀圖，可查看該週明細</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 分頁 2：每週盤點 (Record) ==================== -->
+    <section id="tab-record" class="tab-view" aria-label="每週盤點">
+      <form id="recordForm" novalidate>
+        <!-- 盤點日期與一鍵帶入 -->
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">
+              <span id="recordFormModeTitle">新增每週盤點</span>
+              <span id="recordWeekBadge" class="badge liquid">W0 初始基準</span>
+            </h2>
+            <div style="display: flex; gap: 6px;">
+              <button id="cancelEditBtn" type="button" class="btn btn-secondary btn-sm" style="display: none;">取消編輯</button>
+              <button id="copyPrevWeekBtn" type="button" class="btn btn-secondary btn-sm">帶入上週餘額</button>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <label class="form-label" for="inputDate">
+              盤點日期
+              <small id="prevRecordHint">建議每週固定一天盤點</small>
+            </label>
+            <div class="input-wrap">
+              <input id="inputDate" type="date" class="date-input num" required />
+            </div>
+          </div>
+        </div>
+
+        <!-- 卡片一：【日常流動】 -->
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">
+              卡片一【日常流動】
+            </h2>
+            <span id="liveLiquidSubtotal" class="badge liquid num">小計 $0</span>
+          </div>
+          <div id="liquidInputsContainer"></div>
+        </div>
+
+        <!-- 卡片二：【儲蓄專款】 -->
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">
+              卡片二【儲蓄專款】
+            </h2>
+            <span id="liveSavingsSubtotal" class="badge savings num">小計 $0</span>
+          </div>
+          <div id="savingsInputsContainer"></div>
+        </div>
+
+        <!-- 卡片三：【卡費與收入】 -->
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">卡片三【卡費與收入】</h2>
+            <span class="badge debt">負債與外部流入</span>
+          </div>
+
+          <div class="form-row">
+            <label class="form-label" for="inputUnpaidCard">
+              未繳卡費（負債）
+              <small>已出帳未繳 ＋ 本期未出帳正數總額</small>
+            </label>
+            <div class="input-wrap">
+              <span class="input-prefix">$</span>
+              <input id="inputUnpaidCard" type="text" inputmode="decimal" class="amount-input auto-select" placeholder="0" value="0" />
+            </div>
+          </div>
+
+          <div class="form-row" id="incomeFormRow">
+            <label class="form-label" for="inputIncome">
+              本週總收入
+              <small id="incomeHelperText">薪資、獎金等外部流入（內部轉帳不計）</small>
+            </label>
+            <div class="input-wrap">
+              <span class="input-prefix">$</span>
+              <input id="inputIncome" type="text" inputmode="decimal" class="amount-input auto-select" placeholder="0" value="0" />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <label class="form-label" for="inputNote">
+              備註（選填）
+              <small>發薪、繳卡費或大額消費摘要</small>
+            </label>
+            <div class="input-wrap" style="width: 195px;">
+              <input id="inputNote" type="text" class="text-input" placeholder="例如：繳清中信卡、發薪" />
+            </div>
+          </div>
+        </div>
+
+        <!-- 即時試算預覽區 -->
+        <div class="live-preview-card">
+          <div class="card-header" style="margin-bottom: 10px;">
+            <h3 class="card-title" style="font-size: 14px;">即時試算預覽</h3>
+            <span id="previewTotalAssets" class="badge num">5項資產總額 $0</span>
+          </div>
+
+          <div class="preview-grid">
+            <div class="preview-box">
+              <div class="preview-box-label">本次真實淨可用餘額</div>
+              <div id="previewNetBalance" class="preview-box-val num">$0</div>
+            </div>
+            <div class="preview-box">
+              <div class="preview-box-label">推算本週實際總花費</div>
+              <div id="previewActualSpend" class="preview-box-val num" style="color: var(--accent-primary);">-</div>
+            </div>
+          </div>
+
+          <div id="previewFormulaHint" style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.45;"></div>
+
+          <button id="submitRecordBtn" type="submit" class="btn btn-primary">
+            儲存本週盤點
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <!-- ==================== 分頁 3：歷史明細與設定 (History & Settings) ==================== -->
+    <section id="tab-history" class="tab-view" aria-label="歷史明細與設定">
+      <!-- 歷史明細列表 -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">歷史盤點明細</h2>
+          <span id="historyCountBadge" class="badge">共 0 筆</span>
+        </div>
+        <div id="historyListContainer"></div>
+      </div>
+
+      <!-- 五大資產雙池歸屬設定 -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">五大資產雙池歸屬設定</h2>
+          <button id="resetPoolConfigBtn" type="button" class="btn btn-secondary btn-sm">恢復預設</button>
+        </div>
+        <p style="font-size: 12px; color: var(--text-secondary); margin: 0 0 10px;">
+          可自由調整 5 個帳戶歸屬於「日常流動池」或「儲蓄專款池」，切換後自動重算小計（Google 試算表 A～N 欄位順序保持不變）。
+        </p>
+        <div id="poolConfigContainer"></div>
+      </div>
+
+      <!-- Google 試算表雲端同步設定 -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Google 試算表雲端同步</h2>
+          <span id="cloudLastSyncText" class="badge">尚未綁定</span>
+        </div>
+
+        <div class="form-row" style="flex-direction: column; align-items: stretch; gap: 6px;">
+          <label class="form-label" for="inputGasUrl">
+            Google Apps Script 網頁應用程式網址 (Web App URL)
+          </label>
+          <input id="inputGasUrl" type="url" class="text-input" placeholder="https://script.google.com/macros/s/.../exec" />
+        </div>
+
+        <div class="form-row" style="flex-direction: column; align-items: stretch; gap: 6px;">
+          <label class="form-label" for="inputApiToken">
+            安全驗證 API Token（密碼）
+          </label>
+          <input id="inputApiToken" type="password" class="text-input" placeholder="預設例如：RONG-2026-SECRET" />
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px;">
+          <button id="saveCloudConfigBtn" type="button" class="btn btn-secondary btn-sm">儲存設定並測試連線</button>
+          <button id="manualPushSyncBtn" type="button" class="btn btn-primary btn-sm">立即推送至試算表</button>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">
+          <button id="pullFromCloudBtn" type="button" class="btn btn-secondary btn-sm">從雲端試算表載入還原</button>
+          <button id="exportCsvBtn" type="button" class="btn btn-secondary btn-sm">匯出 CSV 備份</button>
+        </div>
+
+        <!-- 內建摺疊式圖文教學說明 -->
+        <details class="guide-box">
+          <summary>📖 如何綁定 Google 試算表？（3 分鐘設定教學）</summary>
+          <ol>
+            <li>開啟一份新的 <strong>Google 試算表 (Google Sheets)</strong>。</li>
+            <li>點擊上方選單「<strong>擴充功能</strong>」→「<strong>Apps Script</strong>」。</li>
+            <li>將本專案隨附的 <code>Code.gs</code> 程式碼完整貼上，並確認第 9 行的 <code>API_TOKEN</code> 密碼（例如 <code>RONG-2026-SECRET</code>）。</li>
+            <li>點擊右上角「<strong>部署</strong>」→「<strong>新增部署作業</strong>」：
+              <ul>
+                <li>選取類型：「<strong>網頁應用程式</strong>」</li>
+                <li>執行身分：「<strong>我</strong>」</li>
+                <li>誰可以存取：「<strong>所有人</strong>」（透過自訂 API Token 保護讀寫安全，免除 OAuth 過期問題）</li>
+              </ul>
+            </li>
+            <li>複製產生的「<strong>網頁應用程式網址 (<code>.../exec</code>)</strong>」，貼回上方輸入框並填入相同 Token，點擊「<strong>儲存設定並測試連線</strong>」即完成！</li>
+          </ol>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <!-- 底部固定導覽列 -->
+  <nav class="bottom-nav" aria-label="主要分頁導覽">
+    <button type="button" class="nav-btn active" data-target="tab-dashboard">
+      <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z" stroke-linejoin="round"/></svg>
+      <span>首頁總覽</span>
+    </button>
+    <button type="button" class="nav-btn" data-target="tab-record">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>每週盤點</span>
+    </button>
+    <button type="button" class="nav-btn" data-target="tab-history">
+      <svg viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>歷史與設定</span>
+    </button>
+  </nav>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

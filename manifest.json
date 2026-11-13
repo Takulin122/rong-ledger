@@ -1,0 +1,31 @@
+{
+  "name": "融融記帳表 — 每週餘額盤點",
+  "short_name": "融融記帳",
+  "description": "專為個人與情侶設計的每週餘額盤點制記帳 PWA，支援雙池資金管理與 Google 試算表雲端同步。",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FBF9F5",
+  "theme_color": "#FBF9F5",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

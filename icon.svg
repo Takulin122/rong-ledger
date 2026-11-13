@@ -1,21 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#F7F2EA"/>
-      <stop offset="100%" stop-color="#EAE0D2"/>
-    </linearGradient>
-    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#C86D51"/>
-      <stop offset="100%" stop-color="#A85238"/>
-    </linearGradient>
-  </defs>
-  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
-  <rect x="76" y="88" width="360" height="336" rx="44" fill="#FFFFFF" stroke="#E0D6C8" stroke-width="8"/>
-  <rect x="76" y="88" width="360" height="92" rx="44" fill="url(#accent)"/>
-  <rect x="76" y="140" width="360" height="40" fill="url(#accent)"/>
-  <circle cx="144" cy="134" r="14" fill="#FBF9F5" opacity="0.9"/>
-  <circle cx="368" cy="134" r="14" fill="#FBF9F5" opacity="0.9"/>
-  <text x="256" y="295" font-family="-apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif" font-size="112" font-weight="800" fill="#2C2623" text-anchor="middle">融</text>
-  <rect x="136" y="344" width="110" height="22" rx="11" fill="#C86D51" opacity="0.85"/>
-  <rect x="262" y="344" width="114" height="22" rx="11" fill="#4A7C59" opacity="0.85"/>
+  <rect width="512" height="512" rx="96" fill="#f5f4f0"/>
+  <rect x="64" y="64" width="384" height="384" rx="48" fill="#ecebe8" stroke="#d6d5d2" stroke-width="6"/>
+  <rect x="64" y="64" width="384" height="96" rx="48" fill="#131313"/>
+  <rect x="64" y="120" width="384" height="40" fill="#131313"/>
+  <circle cx="136" cy="112" r="12" fill="#ffc61a"/>
+  <text x="256" y="302" font-family="'EB Garamond', 'Noto Serif TC', Georgia, serif" font-size="124" font-weight="600" fill="#000000" text-anchor="middle">融</text>
+  <rect x="132" y="356" width="124" height="20" rx="6" fill="#ffc61a"/>
+  <rect x="266" y="356" width="114" height="20" rx="6" fill="#131313"/>
 </svg>

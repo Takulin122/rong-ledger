@@ -31,7 +31,7 @@
   <header class="app-header">
     <div>
       <h1 class="brand-title">融融記帳表</h1>
-      <div id="headerSubtitle" class="brand-subtitle">每週餘額盤點制 · 雙池資金管理</div>
+      <div id="headerSubtitle" class="brand-subtitle">每週餘額盤點制 · 雙池與存錢計畫</div>
     </div>
     <button id="syncStatusPill" class="sync-pill" data-state="offline" type="button" title="點擊立即同步">
       <span class="sync-dot"></span>
@@ -61,6 +61,70 @@
             <div id="dashTotalAssets" class="hero-stat-value num">$0</div>
             <div id="dashIncomeNote" class="hero-stat-label" style="margin-top: 4px;">本週收入 $0</div>
           </div>
+        </div>
+      </div>
+
+      <!-- 本月收入＆存錢計畫進度卡片 -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">
+            本月收入＆存錢計畫進度
+            <span id="dashMonthBadge" class="badge savings num">本月</span>
+          </h2>
+          <button id="goMonthlyPlanBtn" type="button" class="btn btn-secondary btn-sm">每月填寫</button>
+        </div>
+
+        <!-- 本月雙管道收入摘要 -->
+        <div class="pool-grid" style="margin-bottom: 12px;">
+          <div class="pool-box">
+            <div class="pool-box-header">
+              <span>土銀匯款收入</span>
+              <span class="badge savings">匯款入帳</span>
+            </div>
+            <div id="dashMonthIncomeLand" class="pool-box-amount num">$0</div>
+          </div>
+          <div class="pool-box">
+            <div class="pool-box-header">
+              <span>袋袋現金收入</span>
+              <span class="badge liquid">領現入袋</span>
+            </div>
+            <div id="dashMonthIncomeBag" class="pool-box-amount num">$0</div>
+          </div>
+        </div>
+
+        <!-- 存錢目標 1：每月存現金 80,000 -->
+        <div class="goal-item">
+          <div class="goal-header">
+            <span class="goal-title">💵 每月存現金計畫（袋袋現金）</span>
+            <span id="dashCashGoalNums" class="goal-numbers num">$0 / $80,000</span>
+          </div>
+          <div class="goal-track">
+            <div id="dashCashGoalBar" class="goal-fill cash" style="width: 0%;"></div>
+          </div>
+          <div class="goal-sub num">
+            <span id="dashCashGoalPct">達成率 0%</span>
+            <span id="dashCashGoalRemain">尚差 $80,000</span>
+          </div>
+        </div>
+
+        <!-- 存錢目標 2：每月台銀帳戶存 45,000 -->
+        <div class="goal-item">
+          <div class="goal-header">
+            <span class="goal-title">🏦 每月台銀存款計畫（台灣銀行）</span>
+            <span id="dashTwGoalNums" class="goal-numbers num">$0 / $45,000</span>
+          </div>
+          <div class="goal-track">
+            <div id="dashTwGoalBar" class="goal-fill" style="width: 0%;"></div>
+          </div>
+          <div class="goal-sub num">
+            <span id="dashTwGoalPct">達成率 0%</span>
+            <span id="dashTwGoalRemain">尚差 $45,000</span>
+          </div>
+        </div>
+
+        <div id="dashCumulativeSavingsStrip" class="chart-detail-box num" style="margin-top: 10px;">
+          <span>累計存錢總進度（含歷月）</span>
+          <strong>$0</strong>
         </div>
       </div>
 
@@ -117,10 +181,96 @@
       </div>
     </section>
 
-    <!-- ==================== 分頁 2：每週盤點 (Record) ==================== -->
-    <section id="tab-record" class="tab-view" aria-label="每週盤點">
+    <!-- ==================== 分頁 2：每週盤點＆每月計畫 (Record) ==================== -->
+    <section id="tab-record" class="tab-view" aria-label="每週盤點與每月計畫">
+      <!-- 區塊 A：每月收入與存錢計畫（每月輸入一次） -->
+      <div id="monthlyPlanCard" class="card" style="border: 1.5px solid var(--accent-savings);">
+        <div class="card-header">
+          <h2 class="card-title">
+            🗓️ 每月收入＆存錢計畫
+            <span class="badge savings">每月輸入一次</span>
+          </h2>
+          <button id="autoCalcMonthlySavingsBtn" type="button" class="btn btn-secondary btn-sm" title="自動比對本月與上月盤點的袋袋現金、台銀餘額差額">
+            依盤點增幅帶入
+          </button>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label" for="inputPlanMonth">
+            所屬月份
+            <small>選擇要記錄或查看的月份</small>
+          </label>
+          <div class="input-wrap">
+            <input id="inputPlanMonth" type="month" class="date-input num" />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label" for="inputMonthlyLandIncome">
+            1. 收入：直接匯款到土銀帳戶
+            <small>每月匯入土地銀行之薪資／收入</small>
+          </label>
+          <div class="input-wrap">
+            <span class="input-prefix">$</span>
+            <input id="inputMonthlyLandIncome" type="text" inputmode="decimal" class="amount-input auto-select-monthly" placeholder="0" value="0" />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label" for="inputMonthlyBagIncome">
+            2. 收入：直接領現金到袋袋現金
+            <small>每月領現放入袋袋現金之收入</small>
+          </label>
+          <div class="input-wrap">
+            <span class="input-prefix">$</span>
+            <input id="inputMonthlyBagIncome" type="text" inputmode="decimal" class="amount-input auto-select-monthly" placeholder="0" value="0" />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label" for="inputMonthlySavedCash">
+            💵 存錢計畫：本月已存現金
+            <small id="labelTargetCash">每月目標存現金 $80,000（袋袋現金）</small>
+          </label>
+          <div class="input-wrap">
+            <span class="input-prefix">$</span>
+            <input id="inputMonthlySavedCash" type="text" inputmode="decimal" class="amount-input auto-select-monthly" placeholder="0" value="0" />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label" for="inputMonthlySavedTwBank">
+            🏦 存錢計畫：本月已存台銀帳戶
+            <small id="labelTargetTwBank">每月目標存台銀 $45,000（台灣銀行）</small>
+          </label>
+          <div class="input-wrap">
+            <span class="input-prefix">$</span>
+            <input id="inputMonthlySavedTwBank" type="text" inputmode="decimal" class="amount-input auto-select-monthly" placeholder="0" value="0" />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label" for="inputMonthlyNote">
+            本月備註（選填）
+            <small>年終、獎金或存錢進度備忘</small>
+          </label>
+          <div class="input-wrap" style="width: 195px;">
+            <input id="inputMonthlyNote" type="text" class="text-input" placeholder="例如：11月存錢達標" />
+          </div>
+        </div>
+
+        <div id="monthlyLivePreviewBox" class="chart-detail-box num" style="margin: 12px 0;">
+          <span>本月總收入 <strong>$0</strong></span>
+          <span>本月已存 <strong>$0 / $125,000 (0%)</strong></span>
+        </div>
+
+        <button id="saveMonthlyPlanBtn" type="button" class="btn btn-primary" style="background: var(--accent-savings);">
+          儲存本月收入與存錢進度
+        </button>
+      </div>
+
+      <!-- 區塊 B：每週餘額盤點表單 -->
       <form id="recordForm" novalidate>
-        <!-- 盤點日期與一鍵帶入 -->
         <div class="card">
           <div class="card-header">
             <h2 class="card-title">
@@ -147,9 +297,7 @@
         <!-- 卡片一：【日常流動】 -->
         <div class="card">
           <div class="card-header">
-            <h2 class="card-title">
-              卡片一【日常流動】
-            </h2>
+            <h2 class="card-title">卡片一【日常流動】</h2>
             <span id="liveLiquidSubtotal" class="badge liquid num">小計 $0</span>
           </div>
           <div id="liquidInputsContainer"></div>
@@ -158,19 +306,22 @@
         <!-- 卡片二：【儲蓄專款】 -->
         <div class="card">
           <div class="card-header">
-            <h2 class="card-title">
-              卡片二【儲蓄專款】
-            </h2>
+            <h2 class="card-title">卡片二【儲蓄專款】</h2>
             <span id="liveSavingsSubtotal" class="badge savings num">小計 $0</span>
           </div>
           <div id="savingsInputsContainer"></div>
         </div>
 
-        <!-- 卡片三：【卡費與收入】 -->
+        <!-- 卡片三：【卡費與本週入帳收入】 -->
         <div class="card">
           <div class="card-header">
-            <h2 class="card-title">卡片三【卡費與收入】</h2>
-            <span class="badge debt">負債與外部流入</span>
+            <h2 class="card-title">卡片三【卡費與當週入帳】</h2>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <button id="copyMonthlyIncomeToWeekBtn" type="button" class="btn btn-secondary btn-sm" title="若本週為發薪入帳週，可一鍵帶入上方本月設定的兩筆收入">
+                帶入本月收入
+              </button>
+              <span id="liveWeekIncomeSubtotal" class="badge debt num">本週收入 $0</span>
+            </div>
           </div>
 
           <div class="form-row">
@@ -184,14 +335,25 @@
             </div>
           </div>
 
-          <div class="form-row" id="incomeFormRow">
-            <label class="form-label" for="inputIncome">
-              本週總收入
-              <small id="incomeHelperText">薪資、獎金等外部流入（內部轉帳不計）</small>
+          <div class="form-row">
+            <label class="form-label" for="inputWeekIncomeLand">
+              當週收入：匯款至土銀帳戶
+              <small id="incomeHelperText">本週若有新入帳才填（無則填 0）</small>
             </label>
             <div class="input-wrap">
               <span class="input-prefix">$</span>
-              <input id="inputIncome" type="text" inputmode="decimal" class="amount-input auto-select" placeholder="0" value="0" />
+              <input id="inputWeekIncomeLand" type="text" inputmode="decimal" class="amount-input auto-select" placeholder="0" value="0" />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <label class="form-label" for="inputWeekIncomeBag">
+              當週收入：領現金至袋袋現金
+              <small>本週若有領現入袋袋才填（無則填 0）</small>
+            </label>
+            <div class="input-wrap">
+              <span class="input-prefix">$</span>
+              <input id="inputWeekIncomeBag" type="text" inputmode="decimal" class="amount-input auto-select" placeholder="0" value="0" />
             </div>
           </div>
 
@@ -209,7 +371,7 @@
         <!-- 即時試算預覽區 -->
         <div class="live-preview-card">
           <div class="card-header" style="margin-bottom: 10px;">
-            <h3 class="card-title" style="font-size: 14px;">即時試算預覽</h3>
+            <h3 class="card-title" style="font-size: 14px;">每週盤點即時試算預覽</h3>
             <span id="previewTotalAssets" class="badge num">5項資產總額 $0</span>
           </div>
 
@@ -235,13 +397,48 @@
 
     <!-- ==================== 分頁 3：歷史明細與設定 (History & Settings) ==================== -->
     <section id="tab-history" class="tab-view" aria-label="歷史明細與設定">
-      <!-- 歷史明細列表 -->
+      <!-- 每月收入與存錢計畫歷史列表 -->
       <div class="card">
         <div class="card-header">
-          <h2 class="card-title">歷史盤點明細</h2>
+          <h2 class="card-title">每月收入＆存錢計畫紀錄</h2>
+          <span id="monthlyHistoryCountBadge" class="badge savings">共 0 個月</span>
+        </div>
+        <div id="monthlyHistoryListContainer"></div>
+      </div>
+
+      <!-- 每週歷史明細列表 -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">每週盤點歷史明細</h2>
           <span id="historyCountBadge" class="badge">共 0 筆</span>
         </div>
         <div id="historyListContainer"></div>
+      </div>
+
+      <!-- 每月存錢計畫目標設定 -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">每月存錢計畫目標設定</h2>
+          <span class="badge savings">預設 8萬 + 4.5萬</span>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="inputTargetCash">
+            每月存現金目標（袋袋現金）
+          </label>
+          <div class="input-wrap">
+            <span class="input-prefix">$</span>
+            <input id="inputTargetCash" type="text" inputmode="decimal" class="amount-input auto-select-target" value="80,000" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="inputTargetTwBank">
+            每月台銀存款目標（台灣銀行）
+          </label>
+          <div class="input-wrap">
+            <span class="input-prefix">$</span>
+            <input id="inputTargetTwBank" type="text" inputmode="decimal" class="amount-input auto-select-target" value="45,000" />
+          </div>
+        </div>
       </div>
 
       <!-- 五大資產雙池歸屬設定 -->
@@ -251,7 +448,7 @@
           <button id="resetPoolConfigBtn" type="button" class="btn btn-secondary btn-sm">恢復預設</button>
         </div>
         <p style="font-size: 12px; color: var(--text-secondary); margin: 0 0 10px;">
-          可自由調整 5 個帳戶歸屬於「日常流動池」或「儲蓄專款池」，切換後自動重算小計（Google 試算表 A～N 欄位順序保持不變）。
+          可自由調整 5 個帳戶歸屬於「日常流動池」或「儲蓄專款池」，切換後自動重算小計。
         </p>
         <div id="poolConfigContainer"></div>
       </div>
@@ -287,21 +484,14 @@
           <button id="exportCsvBtn" type="button" class="btn btn-secondary btn-sm">匯出 CSV 備份</button>
         </div>
 
-        <!-- 內建摺疊式圖文教學說明 -->
         <details class="guide-box">
           <summary>📖 如何綁定 Google 試算表？（3 分鐘設定教學）</summary>
           <ol>
             <li>開啟一份新的 <strong>Google 試算表 (Google Sheets)</strong>。</li>
             <li>點擊上方選單「<strong>擴充功能</strong>」→「<strong>Apps Script</strong>」。</li>
-            <li>將本專案隨附的 <code>Code.gs</code> 程式碼完整貼上，並確認第 9 行的 <code>API_TOKEN</code> 密碼（例如 <code>RONG-2026-SECRET</code>）。</li>
-            <li>點擊右上角「<strong>部署</strong>」→「<strong>新增部署作業</strong>」：
-              <ul>
-                <li>選取類型：「<strong>網頁應用程式</strong>」</li>
-                <li>執行身分：「<strong>我</strong>」</li>
-                <li>誰可以存取：「<strong>所有人</strong>」（透過自訂 API Token 保護讀寫安全，免除 OAuth 過期問題）</li>
-              </ul>
-            </li>
-            <li>複製產生的「<strong>網頁應用程式網址 (<code>.../exec</code>)</strong>」，貼回上方輸入框並填入相同 Token，點擊「<strong>儲存設定並測試連線</strong>」即完成！</li>
+            <li>將本專案隨附的 <code>Code.gs</code> 程式碼完整貼上，並確認 <code>API_TOKEN</code> 密碼（例如 <code>RONG-2026-SECRET</code>）。</li>
+            <li>點擊右上角「<strong>部署</strong>」→「<strong>新增部署作業</strong>」（類型：網頁應用程式、執行身分：我、存取權限：所有人）。</li>
+            <li>複製產生的「<strong>網頁應用程式網址 (<code>.../exec</code>)</strong>」，貼回上方輸入框並填入相同 Token，點擊「<strong>儲存設定並測試連線</strong>」即完成！系統會自動建立「每週盤點紀錄」與「每月收入與存錢計畫」兩張工作表。</li>
           </ol>
         </details>
       </div>
@@ -316,7 +506,7 @@
     </button>
     <button type="button" class="nav-btn" data-target="tab-record">
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      <span>每週盤點</span>
+      <span>盤點與月計畫</span>
     </button>
     <button type="button" class="nav-btn" data-target="tab-history">
       <svg viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round"/></svg>

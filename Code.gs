@@ -1,16 +1,22 @@
 /**
- * 融融記帳表 — 每週餘額盤點制 Google Apps Script 後端 (Code.gs)
+ * 融融記帳表 — 每週餘額盤點制 + 每月收入與存錢計畫 Google Apps Script 後端 (Code.gs)
  * 
- * 試算表 A～N 共 14 欄固定結構：
+ * 工作表 1：【每週盤點紀錄】（A～P 欄，完整保留 A～N 核心結構並擴充兩種收入明細）
  * A: 盤點日期 | B: 錢包現金 | C: 中信銀行 | D: 日常流動小計 | E: 袋袋現金 | F: 土地銀行 | G: 台灣銀行
  * H: 儲蓄專款小計 | I: 5項目資產總額 | J: 未繳卡費 | K: 真實淨可用餘額 | L: 本週總收入 | M: 本週實際總花費 | N: 備註
+ * O: 土銀匯款收入 | P: 袋袋現金收入
+ *
+ * 工作表 2：【每月收入與存錢計畫】（A～K 欄，每月輸入一次）
+ * A: 月份 | B: 土銀匯款收入 | C: 袋袋現金收入 | D: 本月總收入 | E: 現金存款目標 | F: 本月已存現金
+ * G: 現金達成率 | H: 台銀存款目標 | I: 本月已存台銀 | J: 台銀達成率 | K: 備註
  */
 
 // 1. 請設定您的自訂安全驗證 Token（須與前端 App 設定頁輸入的 Token 一致）
 const API_TOKEN = 'RONG-2026-SECRET';
 
-// 2. 工作表名稱（若不存在會自動建立並初始化標題列）
+// 2. 工作表名稱
 const SHEET_NAME = '每週盤點紀錄';
+const MONTHLY_SHEET_NAME = '每月收入與存錢計畫';
 
 const HEADERS = [
   '盤點日期',       // A
@@ -26,25 +32,33 @@ const HEADERS = [
   '真實淨可用餘額', // K
   '本週總收入',     // L
   '本週實際總花費', // M
-  '備註'            // N
+  '備註',           // N
+  '土銀匯款收入',   // O
+  '袋袋現金收入'    // P
 ];
 
-/**
- * 處理 GET 請求（支援簡易健康檢查）
- */
+const MONTHLY_HEADERS = [
+  '月份',           // A (YYYY-MM)
+  '土銀匯款收入',   // B
+  '袋袋現金收入',   // C
+  '本月總收入',     // D
+  '現金存款目標',   // E (預設 80,000)
+  '本月已存現金',   // F
+  '現金達成率',     // G
+  '台銀存款目標',   // H (預設 45,000)
+  '本月已存台銀',   // I
+  '台銀達成率',     // J
+  '備註'            // K
+];
+
 function doGet(e) {
   return jsonResponse({
     ok: true,
-    service: '融融記帳表 Cloud Sync API',
+    service: '融融記帳表 Cloud Sync API v1.1',
     timestamp: new Date().toISOString()
   });
 }
 
-/**
- * 處理 POST 請求
- * 注意：前端使用 Content-Type: text/plain;charset=utf-8 傳送 JSON 字串，
- * 可完美避開 iOS Safari 對 GAS 跨網域 CORS OPTIONS 預檢請求的阻擋。
- */
 function doPost(e) {
   const lock = LockService.getScriptLock();
   try {
@@ -56,12 +70,12 @@ function doPost(e) {
 
     const payload = JSON.parse(e.postData.contents);
 
-    // 驗證 Token
     if (!verifyToken(payload.token)) {
       return jsonResponse({ ok: false, error: 'API Token 驗證失敗，請確認密碼是否一致' });
     }
 
     const sheet = getOrCreateSheet();
+    const monthlySheet = getOrCreateMonthlySheet();
     const action = payload.action;
 
     switch (action) {
@@ -70,33 +84,41 @@ function doPost(e) {
           ok: true,
           message: '連線成功',
           sheetName: sheet.getName(),
-          rowCount: Math.max(0, sheet.getLastRow() - 1)
+          rowCount: Math.max(0, sheet.getLastRow() - 1),
+          monthlyRowCount: Math.max(0, monthlySheet.getLastRow() - 1)
         });
 
       case 'getAll':
         return jsonResponse({
           ok: true,
           records: readAllRecords(sheet),
-          poolConfig: getPoolConfigMetadata()
+          monthlyPlans: readAllMonthlyPlans(monthlySheet),
+          poolConfig: getPoolConfigMetadata(),
+          savingsTargets: getSavingsTargetsMetadata()
         });
 
       case 'syncAll':
-        // 接收前端重算後的完整紀錄陣列，確保新增、編輯、刪除後 A~N 欄與後續週次花費 100% 同步
         if (!Array.isArray(payload.records)) {
           return jsonResponse({ ok: false, error: '缺少 records 陣列' });
         }
         if (payload.poolConfig) {
           savePoolConfigMetadata(payload.poolConfig);
         }
+        if (payload.savingsTargets) {
+          saveSavingsTargetsMetadata(payload.savingsTargets);
+        }
         writeAllRecords(sheet, payload.records);
+        if (Array.isArray(payload.monthlyPlans)) {
+          writeAllMonthlyPlans(monthlySheet, payload.monthlyPlans);
+        }
         return jsonResponse({
           ok: true,
           syncedCount: payload.records.length,
+          monthlySyncedCount: Array.isArray(payload.monthlyPlans) ? payload.monthlyPlans.length : 0,
           updatedAt: new Date().toISOString()
         });
 
       case 'appendRow':
-        // 單筆新增或更新（向後相容單筆推送，內部自動重算並寫回）
         if (!payload.record) {
           return jsonResponse({ ok: false, error: '缺少單筆 record 資料' });
         }
@@ -127,18 +149,12 @@ function doPost(e) {
   }
 }
 
-/**
- * 驗證 Token（支援 ScriptProperties 覆寫或上方常數）
- */
 function verifyToken(inputToken) {
   const propToken = PropertiesService.getScriptProperties().getProperty('API_TOKEN');
   const expected = propToken || API_TOKEN;
   return inputToken && String(inputToken).trim() === String(expected).trim();
 }
 
-/**
- * 取得或建立工作表並設定標題列格式
- */
 function getOrCreateSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(SHEET_NAME);
@@ -148,23 +164,28 @@ function getOrCreateSheet() {
 
   if (sheet.getLastRow() === 0) {
     sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
-    styleHeaderRow(sheet);
+    styleHeaderRow(sheet, HEADERS.length);
   } else {
-    const firstRow = sheet.getRange(1, 1, 1, HEADERS.length).getValues()[0];
-    if (firstRow[0] !== HEADERS[0]) {
-      sheet.insertRowBefore(1);
-      sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
-      styleHeaderRow(sheet);
-    }
+    sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+    styleHeaderRow(sheet, HEADERS.length);
   }
   return sheet;
 }
 
-/**
- * 美化試算表標題列與欄寬
- */
-function styleHeaderRow(sheet) {
-  const headerRange = sheet.getRange(1, 1, 1, HEADERS.length);
+function getOrCreateMonthlySheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(MONTHLY_SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(MONTHLY_SHEET_NAME);
+  }
+
+  sheet.getRange(1, 1, 1, MONTHLY_HEADERS.length).setValues([MONTHLY_HEADERS]);
+  styleHeaderRow(sheet, MONTHLY_HEADERS.length);
+  return sheet;
+}
+
+function styleHeaderRow(sheet, colCount) {
+  const headerRange = sheet.getRange(1, 1, 1, colCount);
   headerRange
     .setBackground('#EDE8DF')
     .setFontColor('#2C2623')
@@ -173,21 +194,18 @@ function styleHeaderRow(sheet) {
     .setVerticalAlignment('middle');
   sheet.setFrozenRows(1);
   sheet.setRowHeight(1, 34);
-  sheet.setColumnWidth(1, 115); // A: 盤點日期
-  for (let col = 2; col <= 13; col++) {
-    sheet.setColumnWidth(col, 120);
+  sheet.setColumnWidth(1, 115);
+  for (let col = 2; col <= colCount; col++) {
+    sheet.setColumnWidth(col, 125);
   }
-  sheet.setColumnWidth(14, 220); // N: 備註
 }
 
-/**
- * 讀取試算表所有列並轉為前端結構
- */
 function readAllRecords(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow <= 1) return [];
 
-  const values = sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();
+  const maxCols = Math.max(HEADERS.length, sheet.getLastColumn());
+  const values = sheet.getRange(2, 1, lastRow - 1, maxCols).getValues();
   const tz = Session.getScriptTimeZone() || 'Asia/Taipei';
 
   return values
@@ -201,6 +219,9 @@ function readAllRecords(sheet) {
       }
 
       const isW0 = index === 0 || row[11] === '-' || row[12] === '-';
+      const incomeLandBank = toNum(row[14]);
+      const incomeBagCash = toNum(row[15]);
+      const totalIncome = isW0 ? 0 : (row[14] !== undefined && row[14] !== '' ? (incomeLandBank + incomeBagCash) : toNum(row[11]));
 
       return {
         id: 'row-' + dateStr + '-' + index,
@@ -215,21 +236,18 @@ function readAllRecords(sheet) {
         totalAssets: toNum(row[8]),
         unpaidCard: toNum(row[9]),
         netBalance: toNum(row[10]),
-        income: isW0 ? 0 : toNum(row[11]),
+        income: totalIncome,
+        incomeLandBank: isW0 ? 0 : incomeLandBank,
+        incomeBagCash: isW0 ? 0 : incomeBagCash,
         actualSpend: isW0 ? null : toNum(row[12]),
         note: row[13] ? String(row[13]) : ''
       };
     });
 }
 
-/**
- * 將排序並重算後的紀錄完整寫入 A～N 欄
- * 嚴格遵守 W0 例外規則：第一筆（W0）的 L 欄（本週總收入）與 M 欄（本週實際總花費）填入 '-'
- */
 function writeAllRecords(sheet, records) {
   const sorted = records.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
-  // 清除既有資料列（保留第 1 列標題）
   const lastRow = sheet.getLastRow();
   if (lastRow > 1) {
     sheet.getRange(2, 1, lastRow - 1, HEADERS.length).clearContent();
@@ -245,7 +263,6 @@ function writeAllRecords(sheet, records) {
     const landBank = toNum(rec.landBank);
     const twBank = toNum(rec.twBank);
 
-    // 預設公式：D = B + C, H = E + F + G（若前端有自訂雙池歸屬則使用前端計算後的小計）
     const liquidSubtotal = rec.liquidSubtotal !== undefined
       ? toNum(rec.liquidSubtotal)
       : (walletCash + ctbcBank);
@@ -259,41 +276,123 @@ function writeAllRecords(sheet, records) {
 
     let incomeCell = '-';
     let actualSpendCell = '-';
+    let incomeLandBankCell = '-';
+    let incomeBagCashCell = '-';
 
     if (idx > 0 && prevNetBalance !== null) {
-      const income = toNum(rec.income);
+      const incLand = toNum(rec.incomeLandBank);
+      const incBag = toNum(rec.incomeBagCash);
+      const income = (incLand + incBag > 0) ? (incLand + incBag) : toNum(rec.income);
       const actualSpend = prevNetBalance + income - netBalance;
       incomeCell = income;
       actualSpendCell = actualSpend;
+      incomeLandBankCell = incLand;
+      incomeBagCashCell = incBag;
     }
 
     prevNetBalance = netBalance;
 
     return [
-      rec.date,          // A: 盤點日期
-      walletCash,        // B: 錢包現金
-      ctbcBank,          // C: 中信銀行
-      liquidSubtotal,    // D: 日常流動小計
-      bagCash,           // E: 袋袋現金
-      landBank,          // F: 土地銀行
-      twBank,            // G: 台灣銀行
-      savingsSubtotal,   // H: 儲蓄專款小計
-      totalAssets,       // I: 5項目資產總額
-      unpaidCard,        // J: 未繳卡費
-      netBalance,        // K: 真實淨可用餘額
-      incomeCell,        // L: 本週總收入（W0 為 '-'）
-      actualSpendCell,   // M: 本週實際總花費（W0 為 '-'）
-      rec.note || ''     // N: 備註
+      rec.date,             // A: 盤點日期
+      walletCash,           // B: 錢包現金
+      ctbcBank,             // C: 中信銀行
+      liquidSubtotal,       // D: 日常流動小計
+      bagCash,              // E: 袋袋現金
+      landBank,             // F: 土地銀行
+      twBank,               // G: 台灣銀行
+      savingsSubtotal,      // H: 儲蓄專款小計
+      totalAssets,          // I: 5項目資產總額
+      unpaidCard,           // J: 未繳卡費
+      netBalance,           // K: 真實淨可用餘額
+      incomeCell,           // L: 本週總收入（W0 為 '-'）
+      actualSpendCell,      // M: 本週實際總花費（W0 為 '-'）
+      rec.note || '',       // N: 備註
+      incomeLandBankCell,   // O: 土銀匯款收入
+      incomeBagCashCell     // P: 袋袋現金收入
     ];
   });
 
   const dataRange = sheet.getRange(2, 1, rows.length, HEADERS.length);
   dataRange.setValues(rows);
 
-  // 設定格式：日期欄置中、金額欄千分位等寬格式、小計與淨額微底色標示
   sheet.getRange(2, 1, rows.length, 1).setNumberFormat('yyyy-mm-dd').setHorizontalAlignment('center');
   sheet.getRange(2, 2, rows.length, 12).setNumberFormat('#,##0').setHorizontalAlignment('right');
   sheet.getRange(2, 14, rows.length, 1).setHorizontalAlignment('left');
+  sheet.getRange(2, 15, rows.length, 2).setNumberFormat('#,##0').setHorizontalAlignment('right');
+}
+
+function readAllMonthlyPlans(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return [];
+
+  const values = sheet.getRange(2, 1, lastRow - 1, MONTHLY_HEADERS.length).getValues();
+  const tz = Session.getScriptTimeZone() || 'Asia/Taipei';
+
+  return values
+    .filter(row => row[0] !== '' && row[0] !== null)
+    .map(row => {
+      let monthStr = '';
+      if (Object.prototype.toString.call(row[0]) === '[object Date]') {
+        monthStr = Utilities.formatDate(row[0], tz, 'yyyy-MM');
+      } else {
+        monthStr = String(row[0]).trim();
+      }
+      return {
+        month: monthStr,
+        incomeLandBank: toNum(row[1]),
+        incomeBagCash: toNum(row[2]),
+        totalIncome: toNum(row[3]),
+        targetCashSavings: toNum(row[4]) || 80000,
+        savedCash: toNum(row[5]),
+        targetTwBankSavings: toNum(row[7]) || 45000,
+        savedTwBank: toNum(row[8]),
+        note: row[10] ? String(row[10]) : ''
+      };
+    });
+}
+
+function writeAllMonthlyPlans(sheet, plans) {
+  const sorted = plans.slice().sort((a, b) => String(a.month).localeCompare(String(b.month)));
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, MONTHLY_HEADERS.length).clearContent();
+  }
+
+  if (sorted.length === 0) return;
+
+  const rows = sorted.map(p => {
+    const incLand = toNum(p.incomeLandBank);
+    const incBag = toNum(p.incomeBagCash);
+    const totalInc = incLand + incBag;
+    const targetCash = toNum(p.targetCashSavings) || 80000;
+    const savedCash = toNum(p.savedCash);
+    const cashRate = targetCash > 0 ? Math.round((savedCash / targetCash) * 100) + '%' : '0%';
+    const targetTw = toNum(p.targetTwBankSavings) || 45000;
+    const savedTw = toNum(p.savedTwBank);
+    const twRate = targetTw > 0 ? Math.round((savedTw / targetTw) * 100) + '%' : '0%';
+
+    return [
+      p.month,
+      incLand,
+      incBag,
+      totalInc,
+      targetCash,
+      savedCash,
+      cashRate,
+      targetTw,
+      savedTw,
+      twRate,
+      p.note || ''
+    ];
+  });
+
+  sheet.getRange(2, 1, rows.length, MONTHLY_HEADERS.length).setValues(rows);
+  sheet.getRange(2, 1, rows.length, 1).setNumberFormat('@').setHorizontalAlignment('center');
+  sheet.getRange(2, 2, rows.length, 5).setNumberFormat('#,##0').setHorizontalAlignment('right');
+  sheet.getRange(2, 7, rows.length, 1).setHorizontalAlignment('center');
+  sheet.getRange(2, 8, rows.length, 2).setNumberFormat('#,##0').setHorizontalAlignment('right');
+  sheet.getRange(2, 10, rows.length, 1).setHorizontalAlignment('center');
 }
 
 function getPoolConfigMetadata() {
@@ -308,6 +407,20 @@ function getPoolConfigMetadata() {
 
 function savePoolConfigMetadata(poolConfig) {
   PropertiesService.getScriptProperties().setProperty('POOL_CONFIG', JSON.stringify(poolConfig));
+}
+
+function getSavingsTargetsMetadata() {
+  const raw = PropertiesService.getScriptProperties().getProperty('SAVINGS_TARGETS');
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveSavingsTargetsMetadata(targets) {
+  PropertiesService.getScriptProperties().setProperty('SAVINGS_TARGETS', JSON.stringify(targets));
 }
 
 function toNum(val) {

@@ -833,3 +833,61 @@ details.guide-box code {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+
+/* Monthly Savings Progress Bars */
+.goal-item {
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  margin-bottom: 10px;
+}
+
+.goal-item:last-child {
+  margin-bottom: 0;
+}
+
+.goal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.goal-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.goal-numbers {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.goal-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--border-color);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.goal-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent-savings);
+  transition: width 0.35s ease;
+}
+
+.goal-fill.cash {
+  background: var(--accent-primary);
+}
+
+.goal-sub {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+

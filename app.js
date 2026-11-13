@@ -1,9 +1,11 @@
 /**
- * 融融記帳表 — 每週餘額盤點制 PWA 前端核心邏輯 (app.js)
+ * 融融記帳表 — 每週餘額盤點制 + 每月雙管道收入與存錢計畫 PWA 前端核心邏輯 (app.js)
  */
 
 const STORAGE_KEYS = {
   RECORDS: 'rong_ledger_records_v1',
+  MONTHLY_PLANS: 'rong_ledger_monthly_plans_v1',
+  SAVINGS_TARGETS: 'rong_ledger_savings_targets_v1',
   POOL_CONFIG: 'rong_ledger_pool_config_v1',
   CLOUD_CONFIG: 'rong_ledger_cloud_config_v1',
   SYNC_STATE: 'rong_ledger_sync_state_v1',
@@ -14,9 +16,9 @@ const STORAGE_KEYS = {
 const ASSET_ACCOUNTS = [
   { key: 'walletCash', name: '錢包現金', subtitle: '隨身日常皮夾現鈔', defaultPool: 'liquid' },
   { key: 'ctbcBank', name: '中信銀行', subtitle: '日常刷卡扣款與轉帳主力', defaultPool: 'liquid' },
-  { key: 'bagCash', name: '袋袋現金', subtitle: '預留信封袋／備用現鈔', defaultPool: 'savings' },
-  { key: 'landBank', name: '土地銀行', subtitle: '中長期儲蓄專款帳戶', defaultPool: 'savings' },
-  { key: 'twBank', name: '台灣銀行', subtitle: '定存／緊急預備金帳戶', defaultPool: 'savings' }
+  { key: 'bagCash', name: '袋袋現金', subtitle: '預留信封袋／每月存現目標池', defaultPool: 'savings' },
+  { key: 'landBank', name: '土地銀行', subtitle: '薪資匯款入帳／儲蓄專款帳戶', defaultPool: 'savings' },
+  { key: 'twBank', name: '台灣銀行', subtitle: '每月定額存款目標／預備金帳戶', defaultPool: 'savings' }
 ];
 
 const DEFAULT_POOL_CONFIG = {
@@ -27,8 +29,15 @@ const DEFAULT_POOL_CONFIG = {
   twBank: 'savings'
 };
 
+const DEFAULT_SAVINGS_TARGETS = {
+  cash: 80000,   // 每月要存現金 80,000
+  twBank: 45000  // 每月在台銀帳戶存 45,000
+};
+
 let state = {
   records: [],
+  monthlyPlans: [],
+  savingsTargets: { ...DEFAULT_SAVINGS_TARGETS },
   poolConfig: { ...DEFAULT_POOL_CONFIG },
   cloudConfig: {
     gasUrl: '',
@@ -37,7 +46,7 @@ let state = {
   syncMeta: {
     dirty: false,
     lastSyncAt: null,
-    status: 'offline' // 'synced' | 'syncing' | 'pending' | 'offline'
+    status: 'offline'
   },
   editingId: null,
   selectedChartIndex: null
@@ -52,10 +61,10 @@ document.addEventListener('DOMContentLoaded', () => {
   renderPoolInputs();
   renderPoolConfigSettings();
   bindEvents();
+  initMonthlyPlanForm();
   resetRecordForm();
   renderAll();
 
-  // 若有待同步資料且目前有網路，啟動背景自動補傳
   if (state.syncMeta.dirty && navigator.onLine && state.cloudConfig.gasUrl) {
     syncToCloud({ silent: true });
   }
@@ -94,22 +103,25 @@ function initNavigation() {
   });
 }
 
-function switchTab(targetId) {
+function switchTab(targetId, scrollToId = null) {
   document.querySelectorAll('.nav-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.getAttribute('data-target') === targetId);
   });
   document.querySelectorAll('.tab-view').forEach((sec) => {
     sec.classList.toggle('active', sec.id === targetId);
   });
+
+  if (scrollToId) {
+    const el = document.getElementById(scrollToId);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+  }
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // ==================== 核心盤點公式與重算引擎 ====================
-/**
- * 依據日期由舊至新排序並自動重算所有欄位（與 Google 試算表 A～N 欄 100% 對齊）
- * W0 例外規則：第一筆紀錄（index === 0）僅作為初始淨餘額基準，
- * 本週總收入與本週實際總花費皆不計入（顯示為 '-'）。
- */
 function recalculateRecords(rawRecords, poolConfig = state.poolConfig) {
   const sorted = [...rawRecords].sort((a, b) => {
     const cmp = String(a.date).localeCompare(String(b.date));
@@ -145,7 +157,13 @@ function recalculateRecords(rawRecords, poolConfig = state.poolConfig) {
     const netBalance = totalAssets - unpaidCard;
 
     const isW0 = idx === 0;
-    const income = isW0 ? 0 : parseMoney(rec.income);
+    const incomeLandBank = isW0 ? 0 : parseMoney(rec.incomeLandBank);
+    const incomeBagCash = isW0 ? 0 : parseMoney(rec.incomeBagCash);
+    // 相容舊資料與雙管道收入加總
+    const rawTotalIncome = incomeLandBank + incomeBagCash > 0
+      ? (incomeLandBank + incomeBagCash)
+      : parseMoney(rec.income);
+    const income = isW0 ? 0 : rawTotalIncome;
     const actualSpend = isW0 ? null : (prevNetBalance + income - netBalance);
 
     const computed = {
@@ -164,6 +182,8 @@ function recalculateRecords(rawRecords, poolConfig = state.poolConfig) {
       unpaidCard,
       netBalance,
       income,
+      incomeLandBank,
+      incomeBagCash,
       actualSpend,
       prevNetBalance,
       note: (rec.note || '').trim(),
@@ -183,6 +203,11 @@ function loadStateFromStorage() {
       state.poolConfig = { ...DEFAULT_POOL_CONFIG, ...JSON.parse(savedPool) };
     }
 
+    const savedTargets = localStorage.getItem(STORAGE_KEYS.SAVINGS_TARGETS);
+    if (savedTargets) {
+      state.savingsTargets = { ...DEFAULT_SAVINGS_TARGETS, ...JSON.parse(savedTargets) };
+    }
+
     const savedCloud = localStorage.getItem(STORAGE_KEYS.CLOUD_CONFIG);
     if (savedCloud) {
       state.cloudConfig = { ...state.cloudConfig, ...JSON.parse(savedCloud) };
@@ -195,10 +220,14 @@ function loadStateFromStorage() {
 
     const savedRecords = localStorage.getItem(STORAGE_KEYS.RECORDS);
     if (savedRecords) {
-      const parsed = JSON.parse(savedRecords);
-      state.records = recalculateRecords(parsed, state.poolConfig);
-    } else {
-      state.records = [];
+      state.records = recalculateRecords(JSON.parse(savedRecords), state.poolConfig);
+    }
+
+    const savedMonthly = localStorage.getItem(STORAGE_KEYS.MONTHLY_PLANS);
+    if (savedMonthly) {
+      state.monthlyPlans = JSON.parse(savedMonthly).sort((a, b) =>
+        String(a.month).localeCompare(String(b.month))
+      );
     }
   } catch (err) {
     console.error('載入本機資料失敗:', err);
@@ -206,12 +235,19 @@ function loadStateFromStorage() {
 
   document.getElementById('inputGasUrl').value = state.cloudConfig.gasUrl || '';
   document.getElementById('inputApiToken').value = state.cloudConfig.apiToken || '';
+  document.getElementById('inputTargetCash').value = formatNumberPlain(state.savingsTargets.cash);
+  document.getElementById('inputTargetTwBank').value = formatNumberPlain(state.savingsTargets.twBank);
+  updateTargetLabels();
   updateSyncPillUI();
 }
 
 function saveStateToStorage({ markDirty = true } = {}) {
   state.records = recalculateRecords(state.records, state.poolConfig);
+  state.monthlyPlans.sort((a, b) => String(a.month).localeCompare(String(b.month)));
+
   localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(state.records));
+  localStorage.setItem(STORAGE_KEYS.MONTHLY_PLANS, JSON.stringify(state.monthlyPlans));
+  localStorage.setItem(STORAGE_KEYS.SAVINGS_TARGETS, JSON.stringify(state.savingsTargets));
   localStorage.setItem(STORAGE_KEYS.POOL_CONFIG, JSON.stringify(state.poolConfig));
 
   if (markDirty) {
@@ -222,12 +258,161 @@ function saveStateToStorage({ markDirty = true } = {}) {
   updateSyncPillUI();
 }
 
+function updateTargetLabels() {
+  const cashTarget = state.savingsTargets.cash;
+  const twTarget = state.savingsTargets.twBank;
+  document.getElementById('labelTargetCash').textContent = `每月目標存現金 $${formatMoney(cashTarget)}（袋袋現金）`;
+  document.getElementById('labelTargetTwBank').textContent = `每月目標存台銀 $${formatMoney(twTarget)}（台灣銀行）`;
+}
+
+// ==================== 每月收入與存錢計畫邏輯 ====================
+function initMonthlyPlanForm() {
+  const monthInput = document.getElementById('inputPlanMonth');
+  monthInput.value = getCurrentMonthISO();
+  loadMonthlyPlanIntoForm(monthInput.value);
+
+  document.querySelectorAll('.auto-select-monthly').forEach((input) => {
+    input.onfocus = () => {
+      setTimeout(() => {
+        try {
+          input.select();
+          input.setSelectionRange(0, input.value.length);
+        } catch (_) {}
+      }, 20);
+    };
+    input.oninput = () => updateMonthlyLivePreview();
+    input.onblur = () => {
+      input.value = formatNumberPlain(parseMoney(input.value));
+      updateMonthlyLivePreview();
+    };
+  });
+
+  document.querySelectorAll('.auto-select-target').forEach((input) => {
+    input.onfocus = () => {
+      setTimeout(() => {
+        try {
+          input.select();
+          input.setSelectionRange(0, input.value.length);
+        } catch (_) {}
+      }, 20);
+    };
+    input.onblur = () => {
+      const cashT = parseMoney(document.getElementById('inputTargetCash').value) || 80000;
+      const twT = parseMoney(document.getElementById('inputTargetTwBank').value) || 45000;
+      state.savingsTargets = { cash: cashT, twBank: twT };
+      document.getElementById('inputTargetCash').value = formatNumberPlain(cashT);
+      document.getElementById('inputTargetTwBank').value = formatNumberPlain(twT);
+      updateTargetLabels();
+      saveStateToStorage({ markDirty: true });
+      renderAll();
+      showToast('已更新每月存錢目標金額');
+    };
+  });
+}
+
+function loadMonthlyPlanIntoForm(monthStr) {
+  const plan = state.monthlyPlans.find((p) => p.month === monthStr);
+  document.getElementById('inputMonthlyLandIncome').value = formatNumberPlain(plan ? plan.incomeLandBank : 0);
+  document.getElementById('inputMonthlyBagIncome').value = formatNumberPlain(plan ? plan.incomeBagCash : 0);
+  document.getElementById('inputMonthlySavedCash').value = formatNumberPlain(plan ? plan.savedCash : 0);
+  document.getElementById('inputMonthlySavedTwBank').value = formatNumberPlain(plan ? plan.savedTwBank : 0);
+  document.getElementById('inputMonthlyNote').value = plan && plan.note ? plan.note : '';
+  updateMonthlyLivePreview();
+}
+
+function updateMonthlyLivePreview() {
+  const incLand = parseMoney(document.getElementById('inputMonthlyLandIncome').value);
+  const incBag = parseMoney(document.getElementById('inputMonthlyBagIncome').value);
+  const savedCash = parseMoney(document.getElementById('inputMonthlySavedCash').value);
+  const savedTw = parseMoney(document.getElementById('inputMonthlySavedTwBank').value);
+
+  const totalInc = incLand + incBag;
+  const totalSaved = savedCash + savedTw;
+  const totalTarget = state.savingsTargets.cash + state.savingsTargets.twBank;
+  const pct = totalTarget > 0 ? Math.round((totalSaved / totalTarget) * 100) : 0;
+
+  const box = document.getElementById('monthlyLivePreviewBox');
+  box.innerHTML = `
+    <span>本月總收入 <strong>$${formatMoney(totalInc)}</strong> <small style="color:var(--text-muted)">(土銀 $${formatMoney(incLand)} + 袋袋 $${formatMoney(incBag)})</small></span>
+    <span>存錢進度 <strong>$${formatMoney(totalSaved)} / $${formatMoney(totalTarget)} (${pct}%)</strong></span>
+  `;
+}
+
+function autoCalculateMonthlySavingsFromRecords() {
+  const monthStr = document.getElementById('inputPlanMonth').value || getCurrentMonthISO();
+  const inMonth = state.records.filter((r) => String(r.date).startsWith(monthStr));
+  const beforeMonth = state.records.filter((r) => String(r.date) < `${monthStr}-01`);
+
+  if (inMonth.length === 0) {
+    showToast(`尚無 ${monthStr} 月份的每週盤點紀錄可供比對`);
+    return;
+  }
+
+  const latestInMonth = inMonth[inMonth.length - 1];
+  const baseline = beforeMonth.length > 0 ? beforeMonth[beforeMonth.length - 1] : inMonth[0];
+
+  const diffBagCash = Math.max(0, latestInMonth.bagCash - baseline.bagCash);
+  const diffTwBank = Math.max(0, latestInMonth.twBank - baseline.twBank);
+
+  document.getElementById('inputMonthlySavedCash').value = formatNumberPlain(diffBagCash);
+  document.getElementById('inputMonthlySavedTwBank').value = formatNumberPlain(diffTwBank);
+  updateMonthlyLivePreview();
+  showToast(`已依 ${baseline.date} → ${latestInMonth.date} 盤點增幅帶入存錢進度`);
+}
+
+function saveMonthlyPlan() {
+  const month = document.getElementById('inputPlanMonth').value || getCurrentMonthISO();
+  const incomeLandBank = parseMoney(document.getElementById('inputMonthlyLandIncome').value);
+  const incomeBagCash = parseMoney(document.getElementById('inputMonthlyBagIncome').value);
+  const savedCash = parseMoney(document.getElementById('inputMonthlySavedCash').value);
+  const savedTwBank = parseMoney(document.getElementById('inputMonthlySavedTwBank').value);
+  const note = document.getElementById('inputMonthlyNote').value.trim();
+
+  const planObj = {
+    month,
+    incomeLandBank,
+    incomeBagCash,
+    totalIncome: incomeLandBank + incomeBagCash,
+    targetCashSavings: state.savingsTargets.cash,
+    savedCash,
+    targetTwBankSavings: state.savingsTargets.twBank,
+    savedTwBank,
+    note,
+    updatedAt: Date.now()
+  };
+
+  const idx = state.monthlyPlans.findIndex((p) => p.month === month);
+  if (idx >= 0) {
+    state.monthlyPlans[idx] = planObj;
+  } else {
+    state.monthlyPlans.push(planObj);
+  }
+
+  saveStateToStorage({ markDirty: true });
+  renderAll();
+  showToast(`已儲存 ${month} 月份收入與存錢進度！`);
+
+  if (state.cloudConfig.gasUrl) {
+    syncToCloud({ silent: true });
+  }
+}
+
+function deleteMonthlyPlan(monthStr) {
+  if (!window.confirm(`確定要刪除 ${monthStr} 月份的收入與存錢計畫紀錄嗎？`)) return;
+  state.monthlyPlans = state.monthlyPlans.filter((p) => p.month !== monthStr);
+  saveStateToStorage({ markDirty: true });
+  renderAll();
+  showToast(`已刪除 ${monthStr} 月份紀錄`);
+  if (state.cloudConfig.gasUrl) {
+    syncToCloud({ silent: true });
+  }
+}
+
 // ==================== 動態表單與雙池輸入框渲染 ====================
 function renderPoolInputs() {
   const liquidContainer = document.getElementById('liquidInputsContainer');
   const savingsContainer = document.getElementById('savingsInputsContainer');
 
-  // 保存目前輸入中的值避免切換設定時遺失
   const currentValues = {};
   ASSET_ACCOUNTS.forEach((acc) => {
     const el = document.getElementById(`input_${acc.key}`);
@@ -271,7 +456,6 @@ function renderPoolInputs() {
 }
 
 function attachAutoSelectAndLivePreview() {
-  // iPhone Safari 點擊金額輸入框自動全選，並即時千分位或試算
   document.querySelectorAll('.auto-select').forEach((input) => {
     input.onfocus = () => {
       setTimeout(() => {
@@ -285,6 +469,7 @@ function attachAutoSelectAndLivePreview() {
       updateLiveRecordPreview();
     };
     input.onblur = () => {
+      if (input.disabled) return;
       const val = parseMoney(input.value);
       input.value = formatNumberPlain(val);
       updateLiveRecordPreview();
@@ -292,7 +477,7 @@ function attachAutoSelectAndLivePreview() {
   });
 }
 
-// ==================== 即時試算預覽（分頁 2） ====================
+// ==================== 即時試算預覽（分頁 2 每週盤點） ====================
 function getFormAmounts() {
   const amounts = {};
   ASSET_ACCOUNTS.forEach((acc) => {
@@ -300,17 +485,15 @@ function getFormAmounts() {
     amounts[acc.key] = el ? parseMoney(el.value) : 0;
   });
   const unpaidCard = parseMoney(document.getElementById('inputUnpaidCard').value);
-  const income = parseMoney(document.getElementById('inputIncome').value);
+  const incomeLandBank = parseMoney(document.getElementById('inputWeekIncomeLand').value);
+  const incomeBagCash = parseMoney(document.getElementById('inputWeekIncomeBag').value);
+  const income = incomeLandBank + incomeBagCash;
   const date = document.getElementById('inputDate').value || getTodayISO();
   const note = document.getElementById('inputNote').value.trim();
 
-  return { ...amounts, unpaidCard, income, date, note };
+  return { ...amounts, unpaidCard, incomeLandBank, incomeBagCash, income, date, note };
 }
 
-/**
- * 找出本次輸入日期對應的「上一筆盤點紀錄」
- * 若無更早的紀錄，代表此筆為 W0 初始基準日
- */
 function findPredecessorRecord(targetDate, editingId) {
   const otherRecords = state.records.filter((r) => r.id !== editingId);
   const earlierOrEqual = otherRecords.filter((r) => String(r.date) <= String(targetDate));
@@ -342,18 +525,20 @@ function updateLiveRecordPreview() {
 
   const prevRecord = findPredecessorRecord(formVals.date, state.editingId);
   const weekBadge = document.getElementById('recordWeekBadge');
-  const incomeInput = document.getElementById('inputIncome');
-  const incomeHelper = document.getElementById('incomeHelperText');
+  const incomeLandInput = document.getElementById('inputWeekIncomeLand');
+  const incomeBagInput = document.getElementById('inputWeekIncomeBag');
+  const weekIncomeBadge = document.getElementById('liveWeekIncomeSubtotal');
   const previewSpendEl = document.getElementById('previewActualSpend');
   const formulaHintEl = document.getElementById('previewFormulaHint');
   const prevHintEl = document.getElementById('prevRecordHint');
 
   if (!prevRecord) {
-    // W0 初始基準日例外規則
     weekBadge.textContent = 'W0 初始基準日';
-    incomeInput.value = '-';
-    incomeInput.disabled = true;
-    incomeHelper.textContent = '首筆基準日 (W0) 僅建立初始淨額，不計算當週收入與花費';
+    incomeLandInput.value = '-';
+    incomeBagInput.value = '-';
+    incomeLandInput.disabled = true;
+    incomeBagInput.disabled = true;
+    weekIncomeBadge.textContent = 'W0 不計收入';
     previewSpendEl.textContent = '-';
     formulaHintEl.innerHTML =
       '🌱 <strong>首筆資料 (W0 初始基準日)：</strong>系統將以此筆真實淨可用餘額作為起點基準，下一週 (W1) 起開始自動反推每週實際總花費。';
@@ -363,29 +548,33 @@ function updateLiveRecordPreview() {
       (r) => r.id !== state.editingId && String(r.date) <= String(formVals.date)
     ).length;
     weekBadge.textContent = `W${otherCountBefore} 週次盤點`;
-    if (incomeInput.disabled) {
-      incomeInput.disabled = false;
-      incomeInput.value = '0';
+    if (incomeLandInput.disabled) {
+      incomeLandInput.disabled = false;
+      incomeBagInput.disabled = false;
+      incomeLandInput.value = '0';
+      incomeBagInput.value = '0';
     }
-    const currentIncome = parseMoney(incomeInput.value);
+    const incLand = parseMoney(incomeLandInput.value);
+    const incBag = parseMoney(incomeBagInput.value);
+    const currentIncome = incLand + incBag;
     const actualSpend = prevRecord.netBalance + currentIncome - netBalance;
 
-    incomeHelper.textContent = '薪資、獎金等外部流入（內部轉帳不計，無則填 0）';
+    weekIncomeBadge.textContent = `本週收入 $${formatMoney(currentIncome)}`;
     previewSpendEl.textContent = `$${formatMoney(actualSpend)}`;
     prevHintEl.textContent = `上期 (${prevRecord.date}) 淨額：$${formatMoney(prevRecord.netBalance)}`;
 
     let spendNotice = '';
     if (actualSpend < 0) {
-      spendNotice = `<br/><span style="color: var(--accent-debt);">⚠️ 推算花費為負數 ($${formatMoney(actualSpend)})，請確認是否漏填「本週總收入」或少計上期資產。</span>`;
+      spendNotice = `<br/><span style="color: var(--accent-debt);">⚠️ 推算花費為負數 ($${formatMoney(actualSpend)})，若本週有土銀匯款或領現入袋袋，請填寫上方當週收入或點擊「帶入本月收入」。</span>`;
     }
 
     formulaHintEl.innerHTML =
-      `公式：上期淨額 <strong>$${formatMoney(prevRecord.netBalance)}</strong> ＋ 本週收入 <strong>$${formatMoney(currentIncome)}</strong> － 本次淨額 <strong>$${formatMoney(netBalance)}</strong> ＝ 本週花費 <strong>$${formatMoney(actualSpend)}</strong>` +
+      `公式：上期淨額 <strong>$${formatMoney(prevRecord.netBalance)}</strong> ＋ 本週收入 <strong>$${formatMoney(currentIncome)}</strong> <small>(土銀 $${formatMoney(incLand)} + 袋袋 $${formatMoney(incBag)})</small> － 本次淨額 <strong>$${formatMoney(netBalance)}</strong> ＝ 本週花費 <strong>$${formatMoney(actualSpend)}</strong>` +
       spendNotice;
   }
 }
 
-// ==================== 儲存、編輯、刪除紀錄 ====================
+// ==================== 儲存、編輯、刪除每週紀錄 ====================
 function resetRecordForm() {
   state.editingId = null;
   document.getElementById('recordFormModeTitle').textContent = '新增每週盤點';
@@ -398,8 +587,10 @@ function resetRecordForm() {
     if (el) el.value = '0';
   });
   document.getElementById('inputUnpaidCard').value = '0';
-  document.getElementById('inputIncome').disabled = false;
-  document.getElementById('inputIncome').value = '0';
+  document.getElementById('inputWeekIncomeLand').disabled = false;
+  document.getElementById('inputWeekIncomeBag').disabled = false;
+  document.getElementById('inputWeekIncomeLand').value = '0';
+  document.getElementById('inputWeekIncomeBag').value = '0';
   document.getElementById('inputNote').value = '';
 
   updateLiveRecordPreview();
@@ -422,6 +613,32 @@ function copyPreviousWeekBalances() {
   showToast(`已帶入 ${prev.date} (${prev.weekCode}) 帳戶餘額`);
 }
 
+function copyMonthlyIncomeToWeek() {
+  const formDate = document.getElementById('inputDate').value || getTodayISO();
+  const monthStr = formDate.slice(0, 7);
+  const plan = state.monthlyPlans.find((p) => p.month === monthStr);
+
+  const landVal = plan ? plan.incomeLandBank : parseMoney(document.getElementById('inputMonthlyLandIncome').value);
+  const bagVal = plan ? plan.incomeBagCash : parseMoney(document.getElementById('inputMonthlyBagIncome').value);
+
+  if (landVal === 0 && bagVal === 0) {
+    showToast('請先於上方「每月收入＆存錢計畫」輸入本月土銀匯款與袋袋現金收入');
+    return;
+  }
+
+  const landInput = document.getElementById('inputWeekIncomeLand');
+  const bagInput = document.getElementById('inputWeekIncomeBag');
+  if (landInput.disabled) {
+    showToast('W0 初始基準日不計算當週收入');
+    return;
+  }
+
+  landInput.value = formatNumberPlain(landVal);
+  bagInput.value = formatNumberPlain(bagVal);
+  updateLiveRecordPreview();
+  showToast(`已帶入 ${monthStr} 月份雙管道收入（共 $${formatMoney(landVal + bagVal)}）`);
+}
+
 function handleRecordSubmit(e) {
   e.preventDefault();
   const vals = getFormAmounts();
@@ -441,7 +658,6 @@ function handleRecordSubmit(e) {
     }
     showToast('已更新盤點紀錄並自動重算後續週次');
   } else {
-    // 檢查同一天是否已有紀錄，若有則詢問覆蓋或更新
     const sameDateIdx = state.records.findIndex((r) => r.date === vals.date);
     if (sameDateIdx >= 0) {
       state.records[sameDateIdx] = {
@@ -459,12 +675,31 @@ function handleRecordSubmit(e) {
     }
   }
 
+  // 若當週有輸入土銀匯款或袋袋現金收入，且該月份尚未建立月收入紀錄，貼心同步至當月收入
+  const monthStr = vals.date.slice(0, 7);
+  if (vals.incomeLandBank > 0 || vals.incomeBagCash > 0) {
+    const existingMonthIdx = state.monthlyPlans.findIndex((p) => p.month === monthStr);
+    if (existingMonthIdx < 0) {
+      state.monthlyPlans.push({
+        month: monthStr,
+        incomeLandBank: vals.incomeLandBank,
+        incomeBagCash: vals.incomeBagCash,
+        totalIncome: vals.income,
+        targetCashSavings: state.savingsTargets.cash,
+        savedCash: 0,
+        targetTwBankSavings: state.savingsTargets.twBank,
+        savedTwBank: 0,
+        note: '由每週盤點自動帶入收入',
+        updatedAt: Date.now()
+      });
+    }
+  }
+
   saveStateToStorage({ markDirty: true });
   resetRecordForm();
   renderAll();
   switchTab('tab-dashboard');
 
-  // Offline-First：優先存入 localStorage 後，立即在背景非同步推送至 Google 試算表
   if (state.cloudConfig.gasUrl) {
     syncToCloud({ silent: true });
   }
@@ -486,12 +721,26 @@ function startEditRecord(recordId) {
   });
 
   document.getElementById('inputUnpaidCard').value = formatNumberPlain(rec.unpaidCard);
-  document.getElementById('inputIncome').disabled = false;
-  document.getElementById('inputIncome').value = rec.isW0 ? '-' : formatNumberPlain(rec.income);
+  const landIn = document.getElementById('inputWeekIncomeLand');
+  const bagIn = document.getElementById('inputWeekIncomeBag');
+  landIn.disabled = false;
+  bagIn.disabled = false;
+
+  if (rec.isW0) {
+    landIn.value = '-';
+    bagIn.value = '-';
+  } else if ((rec.incomeLandBank || 0) + (rec.incomeBagCash || 0) > 0) {
+    landIn.value = formatNumberPlain(rec.incomeLandBank);
+    bagIn.value = formatNumberPlain(rec.incomeBagCash);
+  } else {
+    landIn.value = formatNumberPlain(rec.income);
+    bagIn.value = '0';
+  }
+
   document.getElementById('inputNote').value = rec.note || '';
 
   updateLiveRecordPreview();
-  switchTab('tab-record');
+  switchTab('tab-record', 'recordForm');
 }
 
 function deleteRecord(recordId) {
@@ -519,8 +768,67 @@ function deleteRecord(recordId) {
 function renderAll() {
   state.records = recalculateRecords(state.records, state.poolConfig);
   renderDashboard();
+  renderMonthlySavingsDashboard();
+  renderMonthlyHistoryList();
   renderHistoryList();
   updateLiveRecordPreview();
+  updateMonthlyLivePreview();
+}
+
+function renderMonthlySavingsDashboard() {
+  const currentMonth = getCurrentMonthISO();
+  const latestPlan =
+    state.monthlyPlans.find((p) => p.month === currentMonth) ||
+    (state.monthlyPlans.length > 0 ? state.monthlyPlans[state.monthlyPlans.length - 1] : null);
+
+  const displayMonth = latestPlan ? latestPlan.month : currentMonth;
+  document.getElementById('dashMonthBadge').textContent = displayMonth;
+
+  const incLand = latestPlan ? latestPlan.incomeLandBank : 0;
+  const incBag = latestPlan ? latestPlan.incomeBagCash : 0;
+  const savedCash = latestPlan ? latestPlan.savedCash : 0;
+  const savedTw = latestPlan ? latestPlan.savedTwBank : 0;
+
+  const targetCash = (latestPlan && latestPlan.targetCashSavings) || state.savingsTargets.cash;
+  const targetTw = (latestPlan && latestPlan.targetTwBankSavings) || state.savingsTargets.twBank;
+
+  document.getElementById('dashMonthIncomeLand').textContent = `$${formatMoney(incLand)}`;
+  document.getElementById('dashMonthIncomeBag').textContent = `$${formatMoney(incBag)}`;
+
+  // 1. 每月存現金 80,000 進度
+  const cashPct = targetCash > 0 ? Math.round((savedCash / targetCash) * 100) : 0;
+  const cashDiff = targetCash - savedCash;
+  document.getElementById('dashCashGoalNums').textContent = `$${formatMoney(savedCash)} / $${formatMoney(targetCash)}`;
+  document.getElementById('dashCashGoalBar').style.width = `${Math.min(100, Math.max(0, cashPct))}%`;
+  document.getElementById('dashCashGoalPct').textContent = `達成率 ${cashPct}%`;
+  document.getElementById('dashCashGoalRemain').textContent =
+    cashDiff <= 0
+      ? `已達標 ✓ ${cashDiff < 0 ? '(超額 +$' + formatMoney(Math.abs(cashDiff)) + ')' : ''}`
+      : `尚差 $${formatMoney(cashDiff)}`;
+
+  // 2. 每月台銀帳戶存 45,000 進度
+  const twPct = targetTw > 0 ? Math.round((savedTw / targetTw) * 100) : 0;
+  const twDiff = targetTw - savedTw;
+  document.getElementById('dashTwGoalNums').textContent = `$${formatMoney(savedTw)} / $${formatMoney(targetTw)}`;
+  document.getElementById('dashTwGoalBar').style.width = `${Math.min(100, Math.max(0, twPct))}%`;
+  document.getElementById('dashTwGoalPct').textContent = `達成率 ${twPct}%`;
+  document.getElementById('dashTwGoalRemain').textContent =
+    twDiff <= 0
+      ? `已達標 ✓ ${twDiff < 0 ? '(超額 +$' + formatMoney(Math.abs(twDiff)) + ')' : ''}`
+      : `尚差 $${formatMoney(twDiff)}`;
+
+  // 累計存錢總進度（含歷月 + 對照實際袋袋現金與台銀帳面餘額）
+  const totalSavedAllMonths = state.monthlyPlans.reduce(
+    (sum, p) => sum + (p.savedCash || 0) + (p.savedTwBank || 0),
+    0
+  );
+  const latestRec = state.records.length > 0 ? state.records[state.records.length - 1] : null;
+  const actualPoolBalance = latestRec ? latestRec.bagCash + latestRec.twBank : 0;
+
+  document.getElementById('dashCumulativeSavingsStrip').innerHTML = `
+    <span>歷月累計已存 <strong>$${formatMoney(totalSavedAllMonths)}</strong> (${state.monthlyPlans.length} 個月)</span>
+    <span>袋袋＋台銀現況 <strong>$${formatMoney(actualPoolBalance)}</strong></span>
+  `;
 }
 
 function renderDashboard() {
@@ -545,7 +853,7 @@ function renderDashboard() {
     document.getElementById('dashNetBalance').textContent = '$0';
     document.getElementById('dashWeeklySpend').textContent = '-';
     document.getElementById('dashSpendDelta').innerHTML =
-      '<span class="hero-stat-label">請至「每週盤點」建立 W0 初始基準</span>';
+      '<span class="hero-stat-label">請至「盤點與月計畫」建立 W0 初始基準</span>';
     document.getElementById('dashTotalAssets').textContent = '$0';
     document.getElementById('dashIncomeNote').textContent = '本週收入 -';
     document.getElementById('dashPoolRatioText').textContent = '流動 0% · 儲蓄 0%';
@@ -565,7 +873,7 @@ function renderDashboard() {
   document.getElementById('dashTotalAssets').textContent = `$${formatMoney(latest.totalAssets)}`;
   document.getElementById('dashIncomeNote').textContent = latest.isW0
     ? 'W0 初始基準日（不計收入）'
-    : `本週收入 $${formatMoney(latest.income)}${latest.note ? ' · ' + latest.note : ''}`;
+    : `當週入帳 $${formatMoney(latest.income)}${latest.note ? ' · ' + latest.note : ''}`;
 
   if (latest.isW0 || latest.actualSpend === null) {
     document.getElementById('dashWeeklySpend').textContent = '-';
@@ -591,7 +899,6 @@ function renderDashboard() {
     }
   }
 
-  // 雙池比例計算
   const total = Math.max(0, latest.totalAssets);
   const liquidPct = total > 0 ? Math.round((latest.liquidSubtotal / total) * 100) : 0;
   const savingsPct = total > 0 ? 100 - liquidPct : 0;
@@ -680,6 +987,83 @@ function renderTrendChart(recentRecords) {
   }
 }
 
+function renderMonthlyHistoryList() {
+  const container = document.getElementById('monthlyHistoryListContainer');
+  const badge = document.getElementById('monthlyHistoryCountBadge');
+  badge.textContent = `共 ${state.monthlyPlans.length} 個月`;
+
+  if (state.monthlyPlans.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 18px 12px; color: var(--text-muted); font-size: 13px;">
+        尚無每月收入與存錢計畫紀錄。<br/>可於「盤點與月計畫」分頁上方每月輸入一次。
+      </div>
+    `;
+    return;
+  }
+
+  const reversed = [...state.monthlyPlans].reverse();
+  container.innerHTML = '';
+
+  reversed.forEach((plan) => {
+    const targetCash = plan.targetCashSavings || state.savingsTargets.cash;
+    const targetTw = plan.targetTwBankSavings || state.savingsTargets.twBank;
+    const cashPct = targetCash > 0 ? Math.round((plan.savedCash / targetCash) * 100) : 0;
+    const twPct = targetTw > 0 ? Math.round((plan.savedTwBank / targetTw) * 100) : 0;
+    const totalSaved = (plan.savedCash || 0) + (plan.savedTwBank || 0);
+    const totalTarget = targetCash + targetTw;
+
+    const item = document.createElement('div');
+    item.className = 'history-item';
+    item.innerHTML = `
+      <div class="history-summary">
+        <div>
+          <div class="history-date-row">
+            <span class="badge savings num">${plan.month}</span>
+            <span class="num">月總收入 $${formatMoney(plan.totalIncome)}</span>
+          </div>
+          <div class="history-note-preview">
+            土銀匯款 $${formatMoney(plan.incomeLandBank)} · 袋袋領現 $${formatMoney(plan.incomeBagCash)}
+          </div>
+        </div>
+        <div class="history-right">
+          <div class="history-spend num" style="color: var(--accent-savings);">已存 $${formatMoney(totalSaved)}</div>
+          <div class="history-net num">目標 $${formatMoney(totalTarget)}</div>
+        </div>
+      </div>
+      <div class="history-details">
+        <div class="snapshot-grid num">
+          <div class="snapshot-row"><span>土銀匯款收入</span><strong>$${formatMoney(plan.incomeLandBank)}</strong></div>
+          <div class="snapshot-row"><span>袋袋現金收入</span><strong>$${formatMoney(plan.incomeBagCash)}</strong></div>
+          <div class="snapshot-row"><span>已存現金 (${cashPct}%)</span><strong>$${formatMoney(plan.savedCash)} / $${formatMoney(targetCash)}</strong></div>
+          <div class="snapshot-row"><span>已存台銀 (${twPct}%)</span><strong>$${formatMoney(plan.savedTwBank)} / $${formatMoney(targetTw)}</strong></div>
+        </div>
+        <div class="history-actions">
+          <button type="button" class="btn btn-secondary btn-sm edit-month-btn">編輯此月</button>
+          <button type="button" class="btn btn-danger btn-sm del-month-btn">刪除</button>
+        </div>
+      </div>
+    `;
+
+    item.querySelector('.history-summary').addEventListener('click', () => {
+      item.classList.toggle('open');
+    });
+
+    item.querySelector('.edit-month-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('inputPlanMonth').value = plan.month;
+      loadMonthlyPlanIntoForm(plan.month);
+      switchTab('tab-record', 'monthlyPlanCard');
+    });
+
+    item.querySelector('.del-month-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteMonthlyPlan(plan.month);
+    });
+
+    container.appendChild(item);
+  });
+}
+
 function renderHistoryList() {
   const container = document.getElementById('historyListContainer');
   const countBadge = document.getElementById('historyCountBadge');
@@ -688,13 +1072,12 @@ function renderHistoryList() {
   if (state.records.length === 0) {
     container.innerHTML = `
       <div style="text-align: center; padding: 24px 12px; color: var(--text-muted); font-size: 14px;">
-        目前尚無任何盤點紀錄。<br/>點擊下方「每週盤點」建立第一筆 W0 基準吧！
+        目前尚無任何每週盤點紀錄。<br/>點擊下方「盤點與月計畫」建立第一筆 W0 基準吧！
       </div>
     `;
     return;
   }
 
-  // 由新到舊顯示
   const reversed = [...state.records].reverse();
   container.innerHTML = '';
 
@@ -703,7 +1086,9 @@ function renderHistoryList() {
     item.className = 'history-item';
 
     const spendDisplay = rec.isW0 ? 'W0 基準 (-)' : `花費 $${formatMoney(rec.actualSpend)}`;
-    const incomeDisplay = rec.isW0 ? '-' : `$${formatMoney(rec.income)}`;
+    const incomeDisplay = rec.isW0
+      ? '-'
+      : `$${formatMoney(rec.income)} (土銀 $${formatMoney(rec.incomeLandBank)} / 袋袋 $${formatMoney(rec.incomeBagCash)})`;
 
     item.innerHTML = `
       <div class="history-summary">
@@ -730,7 +1115,7 @@ function renderHistoryList() {
           <div class="snapshot-row"><span>H 儲蓄專款小計</span><strong>$${formatMoney(rec.savingsSubtotal)}</strong></div>
           <div class="snapshot-row"><span>I 5項資產總額</span><strong>$${formatMoney(rec.totalAssets)}</strong></div>
           <div class="snapshot-row"><span>J 未繳卡費</span><strong style="color: var(--accent-debt);">-$${formatMoney(rec.unpaidCard)}</strong></div>
-          <div class="snapshot-row"><span>L 本週總收入</span><strong>${incomeDisplay}</strong></div>
+          <div class="snapshot-row" style="grid-column: span 2;"><span>L 當週入帳收入</span><strong>${incomeDisplay}</strong></div>
         </div>
         <div class="history-actions">
           <button type="button" class="btn btn-secondary btn-sm edit-rec-btn" data-id="${rec.id}">編輯此週</button>
@@ -837,7 +1222,6 @@ async function callGasApi(payload) {
     throw new Error('請先於設定頁輸入 Google Apps Script 網址');
   }
 
-  // 使用 text/plain;charset=utf-8 避免 iOS Safari CORS preflight OPTIONS 失敗
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -874,7 +1258,7 @@ async function testCloudConnection() {
     const res = await callGasApi({ action: 'ping' });
     state.syncMeta.status = state.syncMeta.dirty ? 'pending' : 'synced';
     updateSyncPillUI();
-    showToast(`連線成功！工作表「${res.sheetName}」目前共 ${res.rowCount} 筆資料`);
+    showToast(`連線成功！目前共 ${res.rowCount} 筆週盤點紀錄`);
   } catch (err) {
     state.syncMeta.status = 'pending';
     updateSyncPillUI();
@@ -905,7 +1289,9 @@ async function syncToCloud({ silent = false } = {}) {
     await callGasApi({
       action: 'syncAll',
       records: state.records,
-      poolConfig: state.poolConfig
+      monthlyPlans: state.monthlyPlans,
+      poolConfig: state.poolConfig,
+      savingsTargets: state.savingsTargets
     });
 
     state.syncMeta.dirty = false;
@@ -915,7 +1301,7 @@ async function syncToCloud({ silent = false } = {}) {
     updateSyncPillUI();
 
     if (!silent) {
-      showToast(`已同步 ${state.records.length} 筆盤點紀錄至 Google 試算表 ✓`);
+      showToast(`已同步 ${state.records.length} 筆週盤點與 ${state.monthlyPlans.length} 筆月計畫至試算表 ✓`);
     }
   } catch (err) {
     state.syncMeta.dirty = true;
@@ -936,7 +1322,7 @@ async function pullFromCloud() {
   }
 
   if (
-    state.records.length > 0 &&
+    (state.records.length > 0 || state.monthlyPlans.length > 0) &&
     !window.confirm('從雲端試算表載入將會以試算表上的歷史資料覆蓋目前手機上的紀錄，確定要載入還原嗎？')
   ) {
     return;
@@ -952,6 +1338,16 @@ async function pullFromCloud() {
       renderPoolConfigSettings();
       renderPoolInputs();
     }
+    if (res.savingsTargets) {
+      state.savingsTargets = { ...DEFAULT_SAVINGS_TARGETS, ...res.savingsTargets };
+      document.getElementById('inputTargetCash').value = formatNumberPlain(state.savingsTargets.cash);
+      document.getElementById('inputTargetTwBank').value = formatNumberPlain(state.savingsTargets.twBank);
+      updateTargetLabels();
+    }
+    if (Array.isArray(res.monthlyPlans)) {
+      state.monthlyPlans = res.monthlyPlans;
+      loadMonthlyPlanIntoForm(document.getElementById('inputPlanMonth').value || getCurrentMonthISO());
+    }
 
     state.records = recalculateRecords(res.records || [], state.poolConfig);
     state.syncMeta.dirty = false;
@@ -960,7 +1356,7 @@ async function pullFromCloud() {
 
     saveStateToStorage({ markDirty: false });
     renderAll();
-    showToast(`成功從雲端試算表載入 ${state.records.length} 筆歷史紀錄！`);
+    showToast(`成功載入 ${state.records.length} 筆週盤點與 ${state.monthlyPlans.length} 筆月計畫！`);
   } catch (err) {
     state.syncMeta.status = 'pending';
     updateSyncPillUI();
@@ -975,9 +1371,9 @@ function saveCloudConfigInputs() {
   updateSyncPillUI();
 }
 
-// ==================== CSV 匯出備份（對應試算表 A～N 欄） ====================
+// ==================== CSV 匯出備份 ====================
 function exportToCsv() {
-  if (state.records.length === 0) {
+  if (state.records.length === 0 && state.monthlyPlans.length === 0) {
     showToast('目前尚無紀錄可匯出');
     return;
   }
@@ -996,7 +1392,9 @@ function exportToCsv() {
     '真實淨可用餘額',
     '本週總收入',
     '本週實際總花費',
-    '備註'
+    '備註',
+    '土銀匯款收入',
+    '袋袋現金收入'
   ];
 
   const rows = state.records.map((r) => [
@@ -1013,7 +1411,9 @@ function exportToCsv() {
     r.netBalance,
     r.isW0 ? '-' : r.income,
     r.isW0 ? '-' : r.actualSpend,
-    `"${(r.note || '').replace(/"/g, '""')}"`
+    `"${(r.note || '').replace(/"/g, '""')}"`,
+    r.isW0 ? '-' : r.incomeLandBank,
+    r.isW0 ? '-' : r.incomeBagCash
   ]);
 
   const csvContent =
@@ -1025,19 +1425,30 @@ function exportToCsv() {
   link.download = `融融記帳表_${getTodayISO()}.csv`;
   link.click();
   URL.revokeObjectURL(url);
-  showToast('已匯出 A～N 欄完整 CSV 檔案');
+  showToast('已匯出完整 CSV 備份檔案');
 }
 
 // ==================== 事件綁定 ====================
 function bindEvents() {
   document.getElementById('recordForm').addEventListener('submit', handleRecordSubmit);
   document.getElementById('copyPrevWeekBtn').addEventListener('click', copyPreviousWeekBalances);
+  document.getElementById('copyMonthlyIncomeToWeekBtn').addEventListener('click', copyMonthlyIncomeToWeek);
   document.getElementById('cancelEditBtn').addEventListener('click', () => {
     resetRecordForm();
     showToast('已取消編輯');
   });
 
   document.getElementById('inputDate').addEventListener('change', updateLiveRecordPreview);
+
+  // 每月收入與存錢計畫事件
+  document.getElementById('goMonthlyPlanBtn').addEventListener('click', () => {
+    switchTab('tab-record', 'monthlyPlanCard');
+  });
+  document.getElementById('inputPlanMonth').addEventListener('change', (e) => {
+    loadMonthlyPlanIntoForm(e.target.value);
+  });
+  document.getElementById('autoCalcMonthlySavingsBtn').addEventListener('click', autoCalculateMonthlySavingsFromRecords);
+  document.getElementById('saveMonthlyPlanBtn').addEventListener('click', saveMonthlyPlan);
 
   document.getElementById('resetPoolConfigBtn').addEventListener('click', () => {
     state.poolConfig = { ...DEFAULT_POOL_CONFIG };
@@ -1062,7 +1473,6 @@ function bindEvents() {
     }
   });
 
-  // 網路恢復時自動補傳待同步資料
   window.addEventListener('online', () => {
     updateSyncPillUI();
     if (state.syncMeta.dirty && state.cloudConfig.gasUrl) {
@@ -1097,6 +1507,10 @@ function getTodayISO() {
   const now = new Date();
   const tzOffset = now.getTimezoneOffset() * 60000;
   return new Date(now.getTime() - tzOffset).toISOString().slice(0, 10);
+}
+
+function getCurrentMonthISO() {
+  return getTodayISO().slice(0, 7);
 }
 
 function escapeHtml(str) {
